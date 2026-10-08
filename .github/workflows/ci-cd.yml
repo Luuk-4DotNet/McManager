@@ -1,0 +1,226 @@
+name: CI/CD
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 1.0.0). Defaults to ApplicationDisplayVersion in the csproj."
+        required: false
+        type: string
+      publish_homebrew:
+        description: "Publish the cask to the Homebrew tap"
+        required: true
+        default: true
+        type: boolean
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  SOLUTION_DIR: McManager
+  APP_PROJECT: McManager/McManager/McManager.csproj
+  WEB_PROJECT: McManager/McManager.Web/McManager.Web.csproj
+  APP_NAME: McManager
+  TFM: net9.0-maccatalyst
+  RID: maccatalyst-arm64
+  HOMEBREW_TAP: Luuk-4DotNet/homebrew-tap
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Install MAUI workload
+        run: dotnet workload install maui-maccatalyst
+
+      - name: Restore
+        run: |
+          dotnet restore "$APP_PROJECT"
+          dotnet restore "$WEB_PROJECT"
+
+      - name: Build app (Mac Catalyst)
+        run: dotnet build "$APP_PROJECT" -c Release -f "$TFM" --no-restore -p:EnableCodeSigning=false -p:EnablePackageSigning=false
+
+      - name: Build web projects
+        run: dotnet build "$WEB_PROJECT" -c Release --no-restore
+
+  test:
+    name: Test
+    runs-on: macos-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Run tests
+        shell: bash
+        run: |
+          projects=$(find "$SOLUTION_DIR" \( -name '*Tests.csproj' -o -name '*Test.csproj' \))
+          if [ -z "$projects" ]; then
+            echo "No test projects found; skipping."
+            exit 0
+          fi
+          for p in $projects; do
+            dotnet test "$p" -c Release --logger "trx" --results-directory TestResults
+          done
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish
+    runs-on: macos-latest
+    needs: test
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Install MAUI workload
+        run: dotnet workload install maui-maccatalyst
+
+      - name: Determine version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          v="$INPUT_VERSION"
+          if [ -z "$v" ]; then
+            v=$(grep -oE '<ApplicationDisplayVersion>[^<]+' "$APP_PROJECT" | head -1 | sed 's/.*>//')
+          fi
+          v="${v:-1.0.0}"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Publish app (Mac Catalyst)
+        run: >
+          dotnet publish "$APP_PROJECT" -c Release -f "$TFM" -r "$RID"
+          -p:ApplicationDisplayVersion=${{ steps.version.outputs.version }}
+          -p:EnableCodeSigning=false -p:EnablePackageSigning=false
+          -p:CreatePackage=false
+          -o publish
+
+      - name: Zip .app bundle
+        shell: bash
+        run: |
+          app=$(find publish -maxdepth 2 -name '*.app' -type d | head -1)
+          test -n "$app" || { echo "No .app bundle produced"; exit 1; }
+          codesign --force --deep --sign - "$app"
+          mkdir -p dist
+          ditto -c -k --keepParent "$app" "dist/${APP_NAME}-${{ steps.version.outputs.version }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-zip
+          path: dist/*.zip
+          if-no-files-found: error
+
+  prepare-homebrew:
+    name: Prepare Homebrew
+    runs-on: ubuntu-latest
+    needs: publish
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-zip
+          path: dist
+
+      - name: Generate cask
+        shell: bash
+        run: |
+          version="${{ needs.publish.outputs.version }}"
+          name_lc=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
+          sha=$(sha256sum "dist/${APP_NAME}-${version}.zip" | cut -d' ' -f1)
+          mkdir -p cask
+          cat > "cask/${name_lc}.rb" <<EOF
+          cask "${name_lc}" do
+            version "${version}"
+            sha256 "${sha}"
+
+            url "https://github.com/${{ github.repository }}/releases/download/v#{version}/${APP_NAME}-#{version}.zip"
+            name "${APP_NAME}"
+            desc "Task manager for macOS"
+            homepage "https://github.com/${{ github.repository }}"
+
+            depends_on macos: ">= :monterey"
+
+            app "${APP_NAME}.app"
+          end
+          EOF
+          cat "cask/${name_lc}.rb"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-cask
+          path: cask/*.rb
+          if-no-files-found: error
+
+  publish-homebrew:
+    name: Publish to Homebrew
+    runs-on: ubuntu-latest
+    needs: [publish, prepare-homebrew]
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_homebrew
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-zip
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: homebrew-cask
+          path: cask
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ needs.publish.outputs.version }}"
+          gh release create "v${version}" dist/*.zip \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "v${version}" --generate-notes
+
+      - name: Push cask to tap
+        env:
+          # PAT with contents:write on the tap repository
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          version="${{ needs.publish.outputs.version }}"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/${HOMEBREW_TAP}.git" tap
+          mkdir -p tap/Casks
+          cp cask/*.rb tap/Casks/
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks
+          git commit -m "${APP_NAME} ${version}"
+          git push
