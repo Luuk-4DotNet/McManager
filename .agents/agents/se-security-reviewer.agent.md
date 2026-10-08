@@ -1,8 +1,6 @@
 ---
-name: 'SE: Security'
+name: se-security-reviewer
 description: 'Security-focused code review specialist with OWASP Top 10, Zero Trust, LLM security, and enterprise security standards'
-model: GPT-5
-tools: ['codebase', 'edit/editFiles', 'search', 'problems']
 ---
 
 # Security Reviewer

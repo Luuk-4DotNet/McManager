@@ -1,7 +1,6 @@
 ---
-description: "Provide expert .NET software engineering guidance using modern software design patterns."
-name: "Expert .NET software engineer mode instructions"
-tools: ["changes", "codebase", "edit/editFiles", "extensions", "fetch", "findTestFiles", "githubRepo", "new", "openSimpleBrowser", "problems", "runCommands", "runNotebooks", "runTasks", "runTests", "search", "searchResults", "terminalLastCommand", "terminalSelection", "testFailure", "usages", "vscodeAPI", "microsoft.docs.mcp"]
+name: expert-dotnet-software-engineer
+description: 'Provide expert .NET software engineering guidance using modern software design patterns.'
 ---
 
 # Expert .NET software engineer mode instructions
