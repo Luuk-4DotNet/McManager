@@ -426,3 +426,45 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+
+# ---- JetBrains (Rider / IntelliJ) ----
+.idea/
+*.iml
+*.ipr
+*.iws
+cmake-build-*/
+out/
+
+# ---- macOS ----
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.DocumentRevisions-V100
+.TemporaryItems
+*.icloud
+
+# ---- Xcode / Mac Catalyst / MAUI ----
+xcuserdata/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+DerivedData/
+*.dSYM/
+*.app
+*.ipa
+*.apk
+*.aab
+
+# ---- .NET misc ----
+[Bb]in/
+publish/
+dist/
+TestResults/
+*.binlog
+.dotnet/
+*.nupkg
+*.snupkg
+.vscode/.browse.VC.db*
