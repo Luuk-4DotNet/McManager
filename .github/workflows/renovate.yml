@@ -1,0 +1,36 @@
+name: Renovate
+
+on:
+  schedule:
+    # 00:17 UTC = ~02:17 in Central European Summer Time (01:17 in winter)
+    - cron: "17 0 * * *"
+  workflow_dispatch:
+    inputs:
+      log_level:
+        description: "Renovate log level"
+        required: false
+        default: info
+        type: choice
+        options: [info, debug]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: renovatebot/github-action@230ce922b08968d0a4f6f70f295601daff09ef1d # v46.3.7
+        with:
+          token: ${{ secrets.RENOVATE_TOKEN }}
+          configurationFile: renovate.json
+        env:
+          LOG_LEVEL: ${{ inputs.log_level || 'info' }}
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
